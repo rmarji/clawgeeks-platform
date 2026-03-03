@@ -1,12 +1,14 @@
 """Repository pattern for tenant CRUD operations."""
 
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Optional, Sequence, AsyncGenerator
 
+from fastapi import Depends
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import TenantModel
+from .database import get_db
 from ..models.tenant import (
     Tenant,
     TenantCreate,
@@ -14,6 +16,13 @@ from ..models.tenant import (
     TenantConfig,
     TenantStatus,
 )
+
+
+async def get_repository(
+    session: AsyncSession = Depends(get_db),
+) -> "TenantRepository":
+    """FastAPI dependency: get TenantRepository with session."""
+    return TenantRepository(session)
 
 
 class TenantRepository:

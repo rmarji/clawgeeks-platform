@@ -42,6 +42,10 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
+# Alias for backward compatibility
+UserRead = UserResponse
+
+
 class UserWithToken(UserResponse):
     """User response with JWT token."""
     access_token: str

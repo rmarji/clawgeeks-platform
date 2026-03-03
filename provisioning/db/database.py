@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
@@ -23,13 +24,23 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://clawgeeks:clawgeeks@localhost:5432/clawgeeks"
 )
 
-# Create async engine
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=os.getenv("DB_ECHO", "false").lower() == "true",
-    pool_size=5,
-    max_overflow=10,
-)
+# Create async engine with appropriate settings for database type
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite: use StaticPool for in-memory databases, no pool_size
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=os.getenv("DB_ECHO", "false").lower() == "true",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+else:
+    # PostgreSQL/other: use connection pooling
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=os.getenv("DB_ECHO", "false").lower() == "true",
+        pool_size=5,
+        max_overflow=10,
+    )
 
 # Session factory
 async_session_factory = async_sessionmaker(
