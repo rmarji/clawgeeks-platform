@@ -1,0 +1,326 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to production'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/${{ github.repository }}/api
+  DASHBOARD_IMAGE: ghcr.io/${{ github.repository }}/dashboard
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================
+  # Stage 1: Code Quality
+  # ============================================
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install linting tools
+        run: pip install ruff black mypy
+      
+      - name: Ruff (linting)
+        run: ruff check provisioning/ tests/ --output-format=github
+        working-directory: clawgeeks-platform
+        continue-on-error: true
+      
+      - name: Black (formatting check)
+        run: black --check --diff provisioning/ tests/
+        working-directory: clawgeeks-platform
+        continue-on-error: true
+      
+      - name: MyPy (type checking)
+        run: |
+          pip install -r requirements.txt
+          mypy provisioning/ --ignore-missing-imports --no-error-summary
+        working-directory: clawgeeks-platform
+        continue-on-error: true
+
+  lint-frontend:
+    name: Lint Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: clawgeeks-platform/dashboard/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+        working-directory: clawgeeks-platform/dashboard
+      
+      - name: TypeScript check
+        run: npx tsc --noEmit
+        working-directory: clawgeeks-platform/dashboard
+        continue-on-error: true
+      
+      - name: ESLint
+        run: npx next lint
+        working-directory: clawgeeks-platform/dashboard
+        continue-on-error: true
+
+  # ============================================
+  # Stage 2: Tests
+  # ============================================
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+        working-directory: clawgeeks-platform
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/test_provisioner.py tests/test_billing.py tests/test_auth.py tests/test_repository.py tests/test_rbac.py \
+            -v --tb=short --cov=provisioning --cov-report=xml --cov-report=term-missing
+        working-directory: clawgeeks-platform
+        env:
+          JWT_SECRET: "test-secret-key"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: clawgeeks-platform/coverage.xml
+          flags: unittests
+        continue-on-error: true
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: clawgeeks
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: clawgeeks_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+        working-directory: clawgeeks-platform
+      
+      - name: Run integration tests
+        run: |
+          pytest tests/test_integration_e2e.py -v --tb=short
+        working-directory: clawgeeks-platform
+        env:
+          JWT_SECRET: test-secret-key
+          DATABASE_URL: "postgresql+asyncpg://clawgeeks:testpassword@localhost:5432/clawgeeks_test"
+
+  # ============================================
+  # Stage 3: Build
+  # ============================================
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.API_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      
+      - name: Build and push API
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: clawgeeks-platform
+          file: clawgeeks-platform/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-dashboard:
+    name: Build Dashboard Image
+    runs-on: ubuntu-latest
+    needs: [test-unit, lint-frontend]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DASHBOARD_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      
+      - name: Build and push Dashboard
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: clawgeeks-platform/dashboard
+          file: clawgeeks-platform/dashboard/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+
+  # ============================================
+  # Stage 4: Deploy (manual trigger or main push)
+  # ============================================
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-api, build-dashboard]
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    environment:
+      name: production
+      url: https://platform.clawgeeks.com
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Trigger Coolify Webhook
+        run: |
+          curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}",
+              "images": {
+                "api": "${{ env.API_IMAGE }}:${{ github.sha }}",
+                "dashboard": "${{ env.DASHBOARD_IMAGE }}:${{ github.sha }}"
+              }
+            }'
+        continue-on-error: true
+      
+      - name: Run database migrations
+        run: |
+          echo "TODO: Add migration runner via Coolify execute or SSH"
+          echo "For now, migrations run on container startup"
+      
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Complete 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**API Image:** \`${{ env.API_IMAGE }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Dashboard Image:** \`${{ env.DASHBOARD_IMAGE }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** production" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # Stage 5: Notify
+  # ============================================
+  notify:
+    name: Notify Team
+    runs-on: ubuntu-latest
+    needs: [build-api, build-dashboard]
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.build-api.result }}" == "success" ] && [ "${{ needs.build-dashboard.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Send Telegram notification
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
+        run: |
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${{ steps.status.outputs.emoji }} CI/CD: ${{ steps.status.outputs.status }}%0A%0ARepo: ${{ github.repository }}%0ABranch: ${{ github.ref_name }}%0ACommit: ${{ github.sha }}" \
+            -d "parse_mode=HTML"
+        continue-on-error: true

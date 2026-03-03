@@ -1,0 +1,37 @@
+{
+  "name": "@clawgeeks/api-client",
+  "version": "0.3.0",
+  "description": "ClawGeeks Platform API Client",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/",
+    "test": "jest"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clawgeeks/clawgeeks-platform.git"
+  },
+  "keywords": [
+    "clawgeeks",
+    "openclaw",
+    "api",
+    "client"
+  ],
+  "author": "ClawGeeks <dev@clawgeeks.com>",
+  "license": "MIT"
+}
