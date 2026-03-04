@@ -117,10 +117,14 @@ async def auth_service(db_session: AsyncSession) -> AuthService:
 @pytest.fixture
 async def admin_user(db_session: AsyncSession, auth_service: AuthService) -> UserModel:
     """Create admin user for testing."""
+    from provisioning.auth.schemas import UserCreate
     user = await auth_service.create_user(
-        email="admin@clawgeeks.com",
-        password="AdminPass123!",
-        is_admin=True,
+        UserCreate(
+            email="admin@clawgeeks.com",
+            name="Admin User",
+            password="AdminPass123!",
+            is_admin=True,
+        )
     )
     await db_session.commit()
     return user
@@ -129,10 +133,14 @@ async def admin_user(db_session: AsyncSession, auth_service: AuthService) -> Use
 @pytest.fixture
 async def regular_user(db_session: AsyncSession, auth_service: AuthService) -> UserModel:
     """Create regular (non-admin) user for testing."""
+    from provisioning.auth.schemas import UserCreate
     user = await auth_service.create_user(
-        email="user@example.com",
-        password="UserPass123!",
-        is_admin=False,
+        UserCreate(
+            email="user@example.com",
+            name="Regular User",
+            password="UserPass123!",
+            is_admin=False,
+        )
     )
     await db_session.commit()
     return user
