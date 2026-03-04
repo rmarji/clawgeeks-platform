@@ -1,5 +1,6 @@
 """ClawGeeks Provisioning API - Protected with RBAC."""
 
+import os
 from contextlib import asynccontextmanager
 from typing import Optional, Annotated
 
@@ -54,9 +55,13 @@ app = FastAPI(
 # Configure enhanced OpenAPI
 configure_openapi(app)
 
+# CORS configuration: Use ALLOWED_ORIGINS env var (comma-separated) or default to localhost
+_cors_origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000")
+ALLOWED_ORIGINS = [origin.strip() for origin in _cors_origins_raw.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

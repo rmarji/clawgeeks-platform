@@ -3,14 +3,18 @@
 Processes billing events and updates tenant status accordingly.
 """
 
+import asyncio
 import logging
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from ..services.billing import get_billing_service, BillingService, SubscriptionEvent
+from ..services.provisioner import Provisioner
+from ..services.coolify import CoolifyClient
 from ..db.repository import TenantRepository, get_repository
+from ..db import get_db
 from ..models.tenant import TenantStatus
 
 logger = logging.getLogger(__name__)
@@ -52,10 +56,25 @@ async def handle_subscription_created(
         if tenant.status == TenantStatus.PENDING:
             await repository.update_status(tenant_id, TenantStatus.PROVISIONING)
             logger.info(f"Tenant {tenant_id} moved to PROVISIONING after subscription {subscription_id}")
-            # TODO: Trigger actual provisioning via Coolify
+            # Trigger provisioning via Coolify in background
+            asyncio.create_task(_provision_tenant_background(tenant_id))
     
     logger.info(f"Linked subscription {subscription_id} to tenant {tenant_id}")
     return True
+
+
+async def _provision_tenant_background(tenant_id: str) -> None:
+    """Background task to provision tenant via Coolify."""
+    try:
+        async for session in get_db():
+            repository = TenantRepository(session)
+            coolify = CoolifyClient()
+            provisioner = Provisioner(coolify, repository)
+            await provisioner.provision_tenant(tenant_id)
+            logger.info(f"Successfully provisioned tenant {tenant_id}")
+            break
+    except Exception as e:
+        logger.error(f"Failed to provision tenant {tenant_id}: {e}")
 
 
 async def handle_subscription_updated(
@@ -124,8 +143,23 @@ async def handle_subscription_deleted(
     await repository.update_status(tenant_id, TenantStatus.TERMINATED)
     logger.info(f"Tenant {tenant_id} terminated after subscription deletion")
     
-    # TODO: Trigger deprovision (stop container, cleanup)
+    # Trigger deprovisioning in background
+    asyncio.create_task(_deprovision_tenant_background(tenant_id))
     return True
+
+
+async def _deprovision_tenant_background(tenant_id: str) -> None:
+    """Background task to deprovision tenant (stop container, cleanup)."""
+    try:
+        async for session in get_db():
+            repository = TenantRepository(session)
+            coolify = CoolifyClient()
+            provisioner = Provisioner(coolify, repository)
+            await provisioner.terminate_tenant(tenant_id)
+            logger.info(f"Successfully deprovisioned tenant {tenant_id}")
+            break
+    except Exception as e:
+        logger.error(f"Failed to deprovision tenant {tenant_id}: {e}")
 
 
 async def handle_payment_failed(
