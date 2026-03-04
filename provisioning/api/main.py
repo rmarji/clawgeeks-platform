@@ -24,6 +24,7 @@ from .openapi import configure_openapi, API_VERSION
 from .hr_routes import router as hr_router
 from .mentor_routes import router as mentor_router
 from .advisor_routes import router as advisor_router
+from .coding import router as coding_router
 from ..auth.routes import router as auth_router
 from ..auth.dependencies import (
     require_auth,
@@ -66,6 +67,7 @@ app.include_router(auth_router)
 app.include_router(hr_router)  # HR Department (business analysis, team recommendations)
 app.include_router(mentor_router)  # Board of Mentors (domain expert AI advisors)
 app.include_router(advisor_router)  # Board of Advisors (strategic counsel AI)
+app.include_router(coding_router)  # AI Coding Agent (powered by OpenHands)
 
 
 # =============================================================================

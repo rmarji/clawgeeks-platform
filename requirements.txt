@@ -30,3 +30,6 @@ alembic>=1.13.0
 
 # Utils
 python-dotenv>=1.0.0
+
+# AI Coding Agent (requires Python 3.12+)
+openhands-sdk>=1.0.0
