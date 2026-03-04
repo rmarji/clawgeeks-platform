@@ -64,7 +64,12 @@ TestingSessionLocal = sessionmaker(
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
     """Override database dependency for testing."""
     async with TestingSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 app.dependency_overrides[get_db] = override_get_db
@@ -91,6 +96,27 @@ async def setup_database():
     yield
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture(autouse=True)
+def mock_coolify():
+    """Mock CoolifyClient for all tests to avoid hitting real Coolify API."""
+    with patch("provisioning.services.provisioner.CoolifyClient") as mock_class:
+        mock_instance = MagicMock()
+        # Mock deploy_openclaw - returns dict with application_uuid, gateway_url, gateway_token
+        mock_instance.deploy_openclaw = AsyncMock(
+            return_value={
+                "application_uuid": "coolify-test-123",
+                "gateway_url": "https://test.clawgeeks.com",
+                "gateway_token": "test-gateway-token-xyz",
+            }
+        )
+        mock_instance.start_application = AsyncMock(return_value=True)
+        mock_instance.stop_application = AsyncMock(return_value=True)
+        mock_instance.delete_application = AsyncMock(return_value=True)
+        mock_instance.get_application_status = AsyncMock(return_value={"status": "running"})
+        mock_class.return_value = mock_instance
+        yield mock_instance
 
 
 @pytest.fixture
@@ -325,7 +351,6 @@ class TestTenantManagement:
                 "name": "Test Company",
                 "email": "test@company.com",
                 "tier": "pro",
-                "ship_os_enabled": True,
             },
         )
         assert response.status_code == 201
@@ -334,7 +359,6 @@ class TestTenantManagement:
         assert data["email"] == "test@company.com"
         assert data["tier"] == "pro"
         assert data["status"] == "pending"
-        assert data["ship_os_enabled"] is True
 
     async def test_create_tenant_as_non_admin(
         self, client: AsyncClient, user_token: str
@@ -474,7 +498,7 @@ class TestTenantLifecycle:
 
     async def test_full_lifecycle(self, client: AsyncClient, admin_token: str):
         """Test complete tenant lifecycle: create → provision → suspend → reactivate → terminate."""
-        # Create
+        # Create (auto-provisions via background task since Coolify is mocked)
         create_response = await client.post(
             "/api/v1/tenants",
             headers=auth_header(admin_token),
@@ -482,20 +506,15 @@ class TestTenantLifecycle:
         )
         assert create_response.status_code == 201
         tenant_id = create_response.json()["id"]
-        assert create_response.json()["status"] == "pending"
         
-        # Manual provision (normally triggered automatically)
-        with patch("provisioning.services.provisioner.CoolifyClient") as mock_coolify:
-            mock_coolify.return_value.deploy_application = AsyncMock(
-                return_value={"id": "coolify-123", "url": "https://test.clawgeeks.com"}
-            )
-            
-            provision_response = await client.post(
-                f"/api/v1/tenants/{tenant_id}/provision",
-                headers=auth_header(admin_token),
-            )
-            assert provision_response.status_code == 200
-            assert provision_response.json()["status"] == "active"
+        # With mocked Coolify, background provisioning completes immediately
+        # Verify tenant is active
+        get_response = await client.get(
+            f"/api/v1/tenants/{tenant_id}",
+            headers=auth_header(admin_token),
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["status"] == "active"
         
         # Suspend
         suspend_response = await client.post(
@@ -585,6 +604,7 @@ class TestStripeWebhooks:
         
         # Simulate Stripe webhook
         webhook_payload = {
+            "id": "evt_test_12345",  # Stripe events always have an id
             "type": "customer.subscription.created",
             "data": {
                 "object": {

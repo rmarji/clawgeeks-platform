@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
@@ -108,7 +109,7 @@ async def readiness_check(
 ):
     """Readiness check: verifies database connectivity (public)."""
     try:
-        await session.execute("SELECT 1")
+        await session.execute(text("SELECT 1"))
         return {"status": "ready", "database": "connected"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database not ready: {e}")
