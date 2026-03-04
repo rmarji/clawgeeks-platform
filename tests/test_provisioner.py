@@ -76,10 +76,10 @@ async def test_list_tenants_filter_by_status(provisioner):
         ))
     
     # All should be PENDING
-    pending = provisioner.list_tenants(status=TenantStatus.PENDING)
+    pending = await provisioner.list_tenants(status=TenantStatus.PENDING)
     assert len(pending) == 3
     
-    active = provisioner.list_tenants(status=TenantStatus.ACTIVE)
+    active = await provisioner.list_tenants(status=TenantStatus.ACTIVE)
     assert len(active) == 0
 
 
@@ -93,7 +93,7 @@ async def test_get_tenant_by_subdomain(provisioner):
     )
     
     created = await provisioner.create_tenant(request)
-    found = provisioner.get_tenant_by_subdomain("findme-corp")
+    found = await provisioner.get_tenant_by_subdomain("findme-corp")
     
     assert found is not None
     assert found.id == created.id

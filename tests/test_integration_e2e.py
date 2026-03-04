@@ -72,9 +72,6 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-app.dependency_overrides[get_db] = override_get_db
-
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -90,6 +87,8 @@ def event_loop():
 @pytest.fixture(autouse=True)
 async def setup_database():
     """Create fresh database for each test."""
+    # Reset dependency override (may be overwritten by other test modules)
+    app.dependency_overrides[get_db] = override_get_db
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

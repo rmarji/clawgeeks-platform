@@ -65,7 +65,8 @@ class Tenant(BaseModel):
     provisioned_at: Optional[datetime] = None
     
     class Config:
-        use_enum_values = True
+        # Keep enum objects internally; serialize to values on export
+        pass
 
 
 class TenantUpdate(BaseModel):
