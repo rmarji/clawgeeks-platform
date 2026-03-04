@@ -78,6 +78,24 @@ class SandboxInfo:
         }
 
 
+def _map_daytona_state(raw_state: str) -> SandboxState:
+    """Map Daytona SDK state strings to SandboxState enum."""
+    state_map = {
+        "running": SandboxState.RUNNING,
+        "started": SandboxState.RUNNING,
+        "stopped": SandboxState.STOPPED,
+        "stopping": SandboxState.STOPPED,
+        "creating": SandboxState.CREATING,
+        "starting": SandboxState.CREATING,
+        "error": SandboxState.FAILED,
+        "failed": SandboxState.FAILED,
+        "deleted": SandboxState.DELETED,
+        "deleting": SandboxState.DELETED,
+    }
+    normalized = str(raw_state).lower().strip() if raw_state else ""
+    return state_map.get(normalized, SandboxState.RUNNING)
+
+
 class DaytonaProvisioner:
     """
     Provision and manage OpenClaw instances in Daytona sandboxes.
@@ -259,11 +277,12 @@ class DaytonaProvisioner:
             sandbox = self.daytona.get(sandbox_id)
             if sandbox:
                 labels = sandbox.labels or {}
+                raw_state = getattr(sandbox, 'state', None) or getattr(sandbox, 'status', 'running')
                 return SandboxInfo(
                     id=sandbox.id,
                     name=labels.get("name", sandbox.id),
                     tenant_id=labels.get("tenant_id", "unknown"),
-                    state=SandboxState.RUNNING,  # TODO: map actual state
+                    state=_map_daytona_state(raw_state),
                     created_at=datetime.utcnow(),
                     labels=labels,
                 )
@@ -286,7 +305,7 @@ class DaytonaProvisioner:
                     id=s.id,
                     name=s.labels.get("name", s.id) if s.labels else s.id,
                     tenant_id=s.labels.get("tenant_id", "unknown") if s.labels else "unknown",
-                    state=SandboxState.RUNNING,
+                    state=_map_daytona_state(getattr(s, 'state', None) or getattr(s, 'status', 'running')),
                     created_at=datetime.utcnow(),
                     labels=s.labels or {},
                 )
